@@ -1,0 +1,4 @@
+simpleobsws
+pycaw
+comtypes
+psutil
