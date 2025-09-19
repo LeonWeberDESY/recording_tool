@@ -118,6 +118,7 @@ bash install.sh
     - Lastly, select **Do not start a new isntance**
 
 ## Notes
+- If you are working with new monitors, the first time OBS Studio opens, you have to add the desktop to one of the display captures (that is why there is a reminder pop-up).
 - The microphone is dynamically created and removed during recording, ensuring the status light only triggers during active calls.
 - OBS WebSocket commands rely on the input being enabled; this setup avoids leaving it always active.
 
