@@ -3,6 +3,20 @@ REM -------------------------------
 REM Launch OBS and automated Sipgate mic monitoring
 REM -------------------------------
 
+REM Try graceful close of OBS
+taskkill /IM obs64.exe >nul 2>&1
+
+REM Give OBS a few seconds to exit properly
+timeout /t 3 /nobreak >nul
+
+REM If OBS is still running, force kill
+taskkill /IM obs64.exe /F >nul 2>&1
+
+REM Kill your pythonw script if running (optional refinement below)
+taskkill /IM pythonw.exe /F >nul 2>&1
+
+
+
 REM Path to OBS executable (edit if needed)
 set OBS_PATH="C:\Program Files\obs-studio\bin\64bit\obs64.exe"
 
