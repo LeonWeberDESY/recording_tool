@@ -129,3 +129,4 @@ bash install.sh
 4. Ensure Python is in system PATH.
 5. Check that OBS is not blocked by Windows Defender or firewall.
 6. If these didn't help, contact IT Expert Watson.
+7. When trying to open OBS it says something like "msvcp140.dll missing", try to repair your Microsoft Visual C++ 2015-2022 Redistributable: Go to Windows Control Panel → Programs → Programs and Features → Select "Microsoft Visual C++ 2015-2022 Redistributable (x64)" → Change → Repair

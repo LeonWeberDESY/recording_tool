@@ -48,6 +48,9 @@ cd /d %PROJECT_PATH%
 REM Start the automated mic-detection script
 start "" "%PYTHON_PATH%" sipgate_mic_monitor.py
 
+REM Wait a few seconds for python script to launch
+timeout /t 5 /nobreak
+
 REM Show reminder popup to check OBS sources
 powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Reminder: Please check OBS Display Capture sources for your monitors and adjust your scene if needed .','OBS Setup Reminder','OK','Information')"
 

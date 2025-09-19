@@ -13,6 +13,7 @@ import logging
 # -----------------------------
 SIPGATE_PROCESS_NAME = "Sipgate.exe"
 POLL_INTERVAL = 1.0  # seconds
+CONFIRMATION_DELAY = 30  # seconds of stable mic activity before confirming call answer
 OBS_CONTROL_SCRIPT = os.path.join(os.path.dirname(__file__), "obs_control.py")
 PYTHON_EXE = sys.executable  # Use the same Python interpreter
 LOGFILE_PATH = os.path.join(os.path.dirname(__file__), "logs_sipgate_mic_monitor.log")
@@ -82,9 +83,21 @@ def main():
             active = is_sipgate_mic_active()
 
             if active and not recording:
-                logging.info("Call answered: Forwarding OBS to RECORD")
-                call_obs("start")
-                recording = True
+                logging.info("Call detected: Waiting for answer...")
+                
+                # Wait for confirmation delay while mic remains active
+                stable = True
+                for _ in range(CONFIRMATION_DELAY):
+                    time.sleep(1)
+                    if not is_sipgate_mic_active():
+                        logging.info("Call not taken. Ignoring session...")
+                        stable = False
+                        break
+
+                if stable:
+                    logging.info("Call answered: Forwarding OBS to RECORD")
+                    call_obs("start")
+                    recording = True
 
             elif not active and recording:
                 logging.info("Call ended: Forwarding OBS to STOP")
