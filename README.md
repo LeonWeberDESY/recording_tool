@@ -47,23 +47,25 @@ Install all required packages via executing `install.bat`:
 ## Setup Instructions
 
 ### 1. Install Software
+- Make sure that all installations are made in system paths that DO NOT contain spaces in their name (like "Program Files")
 - Download and install **OBS Studio** (≥ 31.1.2) and ensure WebSocket ≥ 5.x is included.
+    1. Open OBS Studio and decline the "auto-configuration wizard".
     1. Open OBS Studio → Tools (top bar) → WebSocket Server Settings.
     2. Enable the server, set port (default 4455), and optionally a password.
+    4. This will open Windows Firewall Settings → Accept it.
     3. Create a new scene and name it i.e. `sipgate_scene`
     4. Go to Settings (bottom right) → Video
-    5. Set Base (Canvas) Resolution and Output (Scaled) resolution each to `5360x1440`
+    5. Set Base (Canvas) Resolution and Output (Scaled) resolution each to `5360x1440`. Set FPS to 30.
     6. Go to Settings → Audio → Global Audio Devices
     7. Select Desktop Audio `Default`, all others `Disabled` 
     8. Select the scene and add a new source (Display Capture) for each monitor connected. Drag and drop the sources on the canvas so they don't overlap.
     9. Go to Settings → Output and select Output Mode `Advanced`.
-    10. Go to Recording and set the Recording Path to as you like. Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`
-    11. Update `obs_control.py` with your `host`, `port`, and `password` as well as `scene_name` and if you are not using the default microphone change  `device_id`.
-- Download and install **Python** 3.13+ and make sure it’s added to system PATH. Therefore:
-    1. Hold `Win` and press `Pause`.
-    2. Click Advanced System Settings.
-    3. Click Environment Variables.
-    4. Append your python file path to the `Path` variable.
+    10. Go to Recording and set the Recording Path to as you like. Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`.
+- Download and install **Python** 3.13+:
+    1. Open the installer and select "use admin privileges when installing py.exe" and "ADd python.exe to PATH"
+    2. Select Customize installation.
+    3. Check all boxes on the next page.
+    4. In "Advanced Options" check the first 5 boxes up to "precompile standard library" and then select a install location.
 - Download the **Git Standalone Installer** (≥ 2.51.0) and follow its installment steps (use the recommend settings).
 
 ### 2. Clone this git repository
@@ -78,13 +80,18 @@ cd recording_tool/
 bash install.sh
 ```
 
-### 3. Update the `start_obs_sipgate_controller.bat` file
+### 3. Update the `start_obs_sipgate_controller.bat` file using Text Editor
 1. Adjust the path to the **OBS** executable (`.exe`)
 2. Adjust the path to the **OBS** folder (the folder that the executable is in)
 3. Adjust the path to the Virtual Environment **Python** executable (`pythonw.exe`)
 4. Adjust the path to the **recording_tool** project folder
 
-### 4. At this point, you can test if the setup was successfull by executing `start_obs_sipgate_controller.bat`
+### 4. Update the `obs_control.py` file using Text Editor
+1. Update your `host`, `port`, and `password`.
+2. Update your `scene_name`.
+3. If you are not using the default microphone, also change  `device_id`.
+
+### 5. At this point, you can test if the setup was successfull by executing `start_obs_sipgate_controller.bat`
 - Double-click the `start_obs_sipgate_controller.bat` or open a terminal in the folder and run:
 ```bash
 .\start_obs_sipgate_controller.bat
@@ -95,7 +102,7 @@ bash install.sh
 - Now a video file should be available at the directory you choose in OBS Studio.
 - If one of these steps didn't work, check Chapter "Troubleshooting" below.
 
-### 5. Create a boot up task using **Task Scheduler**
+### 6. Create a boot up task using **Task Scheduler**
 1. **Open Task Scheduler**
     - Press `Win + S` → type `Task Scheduler` → Enter.
 2. **Create a new task**
