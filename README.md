@@ -37,6 +37,7 @@ Install all required packages via executing `install.bat`:
 | **File**	| **Purpose** |
 | ----- | ----- |
 | `.gitignore` | Contains the files or folders that will ignored by Git when pushing or pulling. |
+| `config.json` | Contains all configuration settings. |
 | `install.sh` | Bash script to create virtual environment and install required packages. |
 | `obs_control.py` |	Dynamically creates mic input and controls OBS recording. |
 | `README.md` |	Contains this README file for installation and documentation. |
@@ -50,17 +51,17 @@ Install all required packages via executing `install.bat`:
 - Make sure that all installations are made in system paths that DO NOT contain spaces in their name (like "Program Files")
 - Download and install **OBS Studio** (≥ 31.1.2) and ensure WebSocket ≥ 5.x is included.
     1. Open OBS Studio and decline the "auto-configuration wizard".
-    1. Open OBS Studio → Tools (top bar) → WebSocket Server Settings.
-    2. Enable the server, set port (default 4455), and optionally a password.
+    2. Open OBS Studio → Tools (top bar) → WebSocket Server Settings.
+    3. Enable the server, set port (default 4455), and optionally a password.
     4. This will open Windows Firewall Settings → Accept it.
-    3. Create a new scene and name it i.e. `sipgate_scene`
-    4. Go to Settings (bottom right) → Video
-    5. Set Base (Canvas) Resolution and Output (Scaled) resolution each to `5360x1440`. Set FPS to 30.
-    6. Go to Settings → Audio → Global Audio Devices
-    7. Select Desktop Audio `Default`, all others `Disabled` 
-    8. Select the scene and add a new source (Display Capture) for each monitor connected. Drag and drop the sources on the canvas so they don't overlap.
-    9. Go to Settings → Output and select Output Mode `Advanced`.
-    10. Go to Recording and set the Recording Path to as you like. Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`.
+    5. Create a new scene and name it i.e. `sipgate_scene`
+    6. Go to Settings (bottom right) → Video
+    7. Set Base (Canvas) Resolution and Output (Scaled) resolution each to `5360x1440`. Set FPS to 30.
+    8. Go to Settings → Audio → Global Audio Devices
+    9. Select Desktop Audio `Default`, all others `Disabled` 
+    10. Select the scene and add a new source (Display Capture) for each monitor connected. Drag and drop the sources on the canvas so they don't overlap.
+    11. Go to Settings → Output and select Output Mode `Advanced`.
+    12. Go to Recording and set the Recording Path to as you like. Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`.
 - Download and install **Python** 3.13+:
     1. Open the installer and select "use admin privileges when installing py.exe" and "ADd python.exe to PATH"
     2. Select Customize installation.
@@ -80,18 +81,14 @@ cd recording_tool/
 bash install.sh
 ```
 
-### 3. Update the `start_obs_sipgate_controller.bat` file using Text Editor
-1. Adjust the path to the **OBS** executable (`.exe`)
-2. Adjust the path to the **OBS** folder (the folder that the executable is in)
-3. Adjust the path to the Virtual Environment **Python** executable (`pythonw.exe`)
+### 3. Update the `config.json` file using Text Editor or Visual Studio Code
+1. Adjust the **OBS** websocket settings (`host`, `port`, and `password`)
+2. Adjust the **OBS** recording settings (`scene_name`, `input_name`,  and `device_id`)
+3. Adjust the directory and file pathes to **OBS** and the Virtual Environment **Python** executable (`pythonw.exe`)
 4. Adjust the path to the **recording_tool** project folder
+5. Adjust the poll interval (how often is the script checking the mic session status) and the recording delay.
 
-### 4. Update the `obs_control.py` file using Text Editor
-1. Update your `host`, `port`, and `password`.
-2. Update your `scene_name`.
-3. If you are not using the default microphone, also change  `device_id`.
-
-### 5. At this point, you can test if the setup was successfull by executing `start_obs_sipgate_controller.bat`
+### 4. At this point, you can test if the setup was successfull by executing `start_obs_sipgate_controller.bat`
 - Double-click the `start_obs_sipgate_controller.bat` or open a terminal in the folder and run:
 ```bash
 .\start_obs_sipgate_controller.bat
@@ -102,7 +99,7 @@ bash install.sh
 - Now a video file should be available at the directory you choose in OBS Studio.
 - If one of these steps didn't work, check Chapter "Troubleshooting" below.
 
-### 6. Create a boot up task using **Task Scheduler**
+### 5. Create a boot up task using **Task Scheduler**
 1. **Open Task Scheduler**
     - Press `Win + S` → type `Task Scheduler` → Enter.
 2. **Create a new task**

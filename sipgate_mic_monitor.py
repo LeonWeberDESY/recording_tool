@@ -7,13 +7,19 @@ import psutil
 import sys
 import os
 import logging
+import json
 
 # -----------------------------
 # Configuration
 # -----------------------------
+import json
+# Open and read the JSON file
+with open('config.json', 'r') as json_file:
+    cfg = json.loads(json_file.read())
+    POLL_INTERVAL = cfg["POLL_INTERVAL"]
+    RECORDING_DELAY = cfg["RECORDING_DELAY"]
+
 SIPGATE_PROCESS_NAME = "Sipgate.exe"
-POLL_INTERVAL = 1.0  # seconds
-CONFIRMATION_DELAY = 30  # seconds of stable mic activity before confirming call answer
 OBS_CONTROL_SCRIPT = os.path.join(os.path.dirname(__file__), "obs_control.py")
 PYTHON_EXE = sys.executable  # Use the same Python interpreter
 LOGFILE_PATH = os.path.join(os.path.dirname(__file__), "logs_sipgate_mic_monitor.log")
@@ -87,7 +93,7 @@ def main():
                 
                 # Wait for confirmation delay while mic remains active
                 stable = True
-                for _ in range(CONFIRMATION_DELAY):
+                for _ in range(RECORDING_DELAY):
                     time.sleep(1)
                     if not is_sipgate_mic_active():
                         logging.info("Call not taken. Ignoring session...")
