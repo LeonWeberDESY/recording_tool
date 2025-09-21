@@ -1,0 +1,12 @@
+{
+    "host": "localhost",
+    "port": 4455,
+    "password": "",
+    "scene_name": "sipgate_scene",
+    "input_name": "Dynamic Mic",
+    "device_id": "default",
+    "obs_path": "E:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe",
+    "obs_folder_path": "E:\\Program Files\\obs-studio\\bin\\64bit",
+    "python_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool\\venv\\Scripts\\pythonw.exe",
+    "project_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool"
+}

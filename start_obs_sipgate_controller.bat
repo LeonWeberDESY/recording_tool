@@ -17,18 +17,20 @@ taskkill /IM pythonw.exe /F >nul 2>&1
 
 
 
-REM Path to OBS executable (edit if needed)
-set OBS_PATH="C:\Program Files\obs-studio\bin\64bit\obs64.exe"
+REM Read JSON values with PowerShell
 
-REM Path to OBS folder (edit if needed)
-set OBS_FOLDER_PATH="C:\Program Files\obs-studio\bin\64bit"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command ^
+  "(Get-Content 'config.json' | ConvertFrom-Json).obs_path"`) do set OBS_PATH=%%i
 
-REM Path to virtual environment (venv) Python executable (edit if needed, 'pythonw' since windowless execution)
-set PYTHON_PATH="C:\Users\LeonWeber\Leon\recording_tool\venv\Scripts\pythonw.exe"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command ^
+  "(Get-Content 'config.json' | ConvertFrom-Json).obs_folder_path"`) do set OBS_FOLDER_PATH=%%i
+  
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command ^
+  "(Get-Content 'config.json' | ConvertFrom-Json).python_path"`) do set PYTHON_PATH=%%i
 
-REM Path to project folder (edit if needed)
-set PROJECT_PATH="C:\Users\LeonWeber\Leon\recording_tool"
 
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command ^
+  "(Get-Content 'config.json' | ConvertFrom-Json).project_path"`) do set PROJECT_PATH=%%i
 
 
 

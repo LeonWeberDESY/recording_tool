@@ -3,15 +3,20 @@ import asyncio
 import simpleobsws
 import logging
 import os
+import json
 
-# OBS WebSocket config
-host = "localhost"
-port = 4455  # set to the port in OBS websocket settings (edit if needed)
-password = ""  # set if you use a password (edit if needed)
+# Open and read the JSON file
+with open('config.json', 'r') as json_file:
+    cfg = json.loads(json_file.read())
+    host = cfg["host"]
+    port = cfg["port"]
+    password = cfg["password"]
+    scene_name = cfg["scene_name"]
+    input_name = cfg["input_name"]
+    device_id = cfg["device_id"]
 
-scene_name = "sipgate_scene"  # replace with your actual scene name (edit if needed)
-input_name = "Dynamic Mic"  # name of the mic input during recording 
-device_id = "default"       # system default microphone (edit if needed)
+
+
 
 LOGFILE_PATH = os.path.join(os.path.dirname(__file__), "logs_obs_control.log")
 
