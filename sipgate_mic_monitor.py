@@ -28,7 +28,7 @@ PYTHON_EXE = sys.executable  # Use the same Python interpreter
 LOGFILE_PATH = os.path.join(os.path.dirname(__file__), "logs_sipgate_mic_monitor.log")
 
 # -----------------------------
-# Configure logging with timestamps
+# Configure logging
 # -----------------------------
 logging.basicConfig(
     filename=LOGFILE_PATH,
@@ -60,29 +60,47 @@ def com_worker_process(queue):
     """
     Separate process to handle COM operations.
     This completely isolates COM from the main process.
+    Enhanced with better error handling and resource management.
     """
     # Import pycaw only in the worker process
-    from pycaw.pycaw import AudioUtilities, IAudioSessionManager2, IAudioSessionControl2
+    try:
+        from pycaw.pycaw import AudioUtilities, IAudioSessionManager2, IAudioSessionControl2
+    except ImportError as e:
+        print(f"COM worker failed to import pycaw: {e}")
+        return
     
     # Initialize COM for this process
-    pythoncom.CoInitialize()
+    try:
+        pythoncom.CoInitialize()
+    except Exception as e:
+        print(f"COM worker failed to initialize: {e}")
+        return
+    
+    enumerator = None
+    mic = None
+    session_manager = None
     
     try:
-        while True:
+        # Pre-initialize COM objects to reduce per-check overhead
+        enumerator = AudioUtilities.GetDeviceEnumerator()
+        mic = enumerator.GetDefaultAudioEndpoint(1, 1)  # 1=capture, 1=communications
+        session_manager = mic.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
+        session_manager = cast(session_manager, POINTER(IAudioSessionManager2))
+        
+        check_count = 0
+        max_checks = 400  # Restart worker after 400 checks to prevent memory issues
+        
+        while check_count < max_checks:
             try:
                 # Get command from queue
-                command = queue.get(timeout=1)
+                command = queue.get(timeout=2)
                 
                 if command == "CHECK":
                     result = False
+                    check_count += 1
                     
                     try:
-                        # Perform the mic check
-                        enumerator = AudioUtilities.GetDeviceEnumerator()
-                        mic = enumerator.GetDefaultAudioEndpoint(1, 1)  # 1=capture, 1=communications
-                        
-                        session_manager = mic.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
-                        session_manager = cast(session_manager, POINTER(IAudioSessionManager2))
+                        # Get fresh session list each time
                         sessions = session_manager.GetSessionEnumerator()
                         
                         for i in range(sessions.GetCount()):
@@ -91,96 +109,198 @@ def com_worker_process(queue):
                                 session2 = session.QueryInterface(IAudioSessionControl2)
                                 pid = session2.GetProcessId()
                                 
-                                proc = psutil.Process(pid)
-                                if proc.name().lower() == SIPGATE_PROCESS_NAME.lower():
-                                    state = session.GetState()  # 0=inactive, 1=active
-                                    if state == 1:
-                                        result = True
-                                        break
-                            except:
+                                # Quick process name check
+                                try:
+                                    proc = psutil.Process(pid)
+                                    if proc.name().lower() == SIPGATE_PROCESS_NAME.lower():
+                                        state = session.GetState()  # 0=inactive, 1=active
+                                        if state == 1:
+                                            result = True
+                                            break
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    continue
+                                    
+                            except Exception:
+                                # Skip problematic sessions
                                 continue
                         
                         queue.put(result)
                         
+                        # Periodic cleanup to prevent memory accumulation
+                        if check_count % 50 == 0:
+                            import gc
+                            gc.collect()
+                        
                     except Exception as e:
                         queue.put(False)
-                        print(f"COM worker error: {e}")
+                        print(f"COM worker check error: {e}")
                         
                 elif command == "EXIT":
+                    print("COM worker received EXIT command")
                     break
                     
-            except:
-                # Timeout - continue waiting
+            except Exception:
+                # Timeout or other queue error - continue waiting
                 continue
+        
+        print(f"COM worker exiting after {check_count} checks (planned restart)")
                 
+    except Exception as e:
+        print(f"COM worker fatal error: {e}")
+        
     finally:
-        pythoncom.CoUninitialize()
+        # Cleanup COM objects
+        try:
+            if session_manager:
+                del session_manager
+            if mic:
+                del mic
+            if enumerator:
+                del enumerator
+        except:
+            pass
+        
+        # Cleanup COM
+        try:
+            pythoncom.CoUninitialize()
+        except:
+            pass
 
 # -----------------------------
-# Process-based mic checker
+# Process-based mic checker with lifecycle management
 # -----------------------------
 class ProcessSafeMicChecker:
     def __init__(self):
         self.process = None
         self.queue = None
         self.response_queue = None
+        self.worker_start_time = None
+        self.check_count = 0
+        self.max_worker_lifetime = 600  # 10 minutes before forced restart
+        self.max_checks_per_worker = 500  # Restart after 500 checks
+        self.consecutive_errors = 0
+        self.max_consecutive_errors = 3
         self.start_worker()
     
     def start_worker(self):
         """Start the COM worker process."""
+        self.cleanup()  # Ensure clean state
+        
         self.queue = multiprocessing.Queue()
         self.response_queue = multiprocessing.Queue()
-        
-        # Create wrapper to handle both queues
-        def worker_wrapper():
-            com_worker_process(self.queue)
         
         self.process = multiprocessing.Process(target=com_worker_process, args=(self.queue,))
         self.process.daemon = True
         self.process.start()
+        self.worker_start_time = time.time()
+        self.check_count = 0
+        self.consecutive_errors = 0
         logging.info("Started COM worker process")
+    
+    def should_restart_worker(self):
+        """Check if worker should be restarted for maintenance."""
+        if not self.process or not self.process.is_alive():
+            return True
+        
+        current_time = time.time()
+        
+        # Restart if worker has been running too long
+        if self.worker_start_time and (current_time - self.worker_start_time) > self.max_worker_lifetime:
+            logging.info(f"Worker restart due to age: {current_time - self.worker_start_time:.0f}s")
+            return True
+        
+        # Restart if too many checks have been performed
+        if self.check_count > self.max_checks_per_worker:
+            logging.info(f"Worker restart due to check count: {self.check_count}")
+            return True
+        
+        # Restart if too many consecutive errors
+        if self.consecutive_errors >= self.max_consecutive_errors:
+            logging.info(f"Worker restart due to consecutive errors: {self.consecutive_errors}")
+            return True
+        
+        return False
     
     def check_mic(self):
         """Check if Sipgate mic is active using the worker process."""
-        if not self.process or not self.process.is_alive():
-            logging.warning("Worker process dead, restarting...")
-            self.cleanup()
+        # Proactive worker maintenance
+        if self.should_restart_worker():
+            logging.info("Performing preventive worker restart...")
             self.start_worker()
             time.sleep(1)  # Give it time to initialize
         
         try:
-            # Clear any old responses
-            while not self.queue.empty():
+            # Clear any old responses with timeout
+            clear_attempts = 0
+            while not self.queue.empty() and clear_attempts < 10:
                 try:
                     self.queue.get_nowait()
+                    clear_attempts += 1
                 except:
                     break
             
             # Send check command
             self.queue.put("CHECK")
+            self.check_count += 1
             
             # Wait for response (with timeout)
             result = self.queue.get(timeout=3)
+            self.consecutive_errors = 0  # Reset on success
             return result
             
         except Exception as e:
-            logging.error(f"Error checking mic: {e}")
-            # Restart worker on error
-            self.cleanup()
-            self.start_worker()
+            self.consecutive_errors += 1
+            logging.error(f"Error checking mic (consecutive: {self.consecutive_errors}): {e}")
+            
+            # Don't restart immediately on first error, give it a chance
+            if self.consecutive_errors >= 2:
+                logging.warning("Multiple consecutive errors, restarting worker...")
+                self.start_worker()
+                time.sleep(1)
+            
             return False
     
     def cleanup(self):
         """Clean up the worker process."""
         if self.process and self.process.is_alive():
             try:
-                self.queue.put("EXIT")
-                self.process.join(timeout=2)
+                # Try graceful shutdown first
+                if hasattr(self, 'queue') and self.queue:
+                    try:
+                        self.queue.put("EXIT", timeout=1)
+                    except:
+                        pass
+                
+                # Wait for graceful exit
+                self.process.join(timeout=3)
+                
+                # Force termination if needed
                 if self.process.is_alive():
+                    logging.warning("Force terminating unresponsive worker...")
                     self.process.terminate()
-                    self.process.join(timeout=2)
+                    self.process.join(timeout=3)
+                    
+                    # Kill if still alive
                     if self.process.is_alive():
+                        logging.warning("Force killing worker process...")
                         self.process.kill()
+                        self.process.join(timeout=2)
+                        
+            except Exception as e:
+                logging.error(f"Error during worker cleanup: {e}")
+            
+            finally:
+                self.process = None
+                
+        # Clean up queues
+        if hasattr(self, 'queue') and self.queue:
+            try:
+                self.queue.close()
+            except:
+                pass
+        if hasattr(self, 'response_queue') and self.response_queue:
+            try:
+                self.response_queue.close()
             except:
                 pass
 
