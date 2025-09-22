@@ -20,6 +20,7 @@ with open('config.json', 'r') as json_file:
     cfg = json.loads(json_file.read())
     POLL_INTERVAL = cfg["POLL_INTERVAL"]
     RECORDING_DELAY = cfg["RECORDING_DELAY"]
+    CALL_DURATION_THRESHOLD = cfg["CALL_DURATION_THRESHOLD"] 
 
 SIPGATE_PROCESS_NAME = "Sipgate.exe"
 OBS_CONTROL_SCRIPT = os.path.join(os.path.dirname(__file__), "obs_control.py")
@@ -217,13 +218,14 @@ def call_obs(action):
         logging.error(f"Failed to call OBS control: {e}")
 
 # -----------------------------
-# Main loop with process isolation
+# Main loop with process isolation and duration threshold
 # -----------------------------
 def main():
     logging.info("="*50)
     logging.info("Starting Sipgate mic monitor (Process-Isolated Version)")
     logging.info(f"Python version: {sys.version}")
     logging.info(f"Poll interval: {POLL_INTERVAL}s, Recording delay: {RECORDING_DELAY}s")
+    logging.info(f"Call duration threshold: {CALL_DURATION_THRESHOLD}s")
     logging.info("="*50)
     
     recording = False
@@ -232,11 +234,17 @@ def main():
     max_consecutive_errors = 10
     use_fallback = False
     
+    # Duration threshold variables
+    call_start_time = None
+    call_detection_logged = False
+    
     # Create the process-safe mic checker
     mic_checker = ProcessSafeMicChecker()
     
     try:
         while True:
+            current_time = time.time()
+            
             try:
                 # Check mic status
                 if not use_fallback:
@@ -262,41 +270,54 @@ def main():
                 active = False
 
             try:
-                if active and not recording:
-                    logging.info("Call detected: Waiting for answer...")
-
-                    # Wait for confirmation delay
-                    stable = True
-                    for i in range(RECORDING_DELAY):
-                        time.sleep(1)
+                # Handle audio activity with duration threshold
+                if active:
+                    if call_start_time is None:
+                        # First detection of audio activity
+                        call_start_time = current_time
+                        call_detection_logged = False
+                        logging.info("Audio activity detected: Checking duration...")
+                    
+                    # Check if audio has been active long enough to be considered a call
+                    call_duration = current_time - call_start_time
+                    
+                    if call_duration >= CALL_DURATION_THRESHOLD:
+                        # This is now considered a real call
+                        if not call_detection_logged:
+                            logging.info(f"Call detected (duration: {call_duration:.1f}s): Waiting for answer...")
+                            call_detection_logged = True
                         
-                        # Check if still active
-                        if not use_fallback:
-                            check_result = mic_checker.check_mic()
+                        # Check if we should start recording (after recording delay)
+                        if not recording and call_duration >= RECORDING_DELAY:
+                            logging.info("Call answered: Starting OBS recording")
+                            call_obs("start")
+                            recording = True
+                
+                else:  # No microphone activity
+                    if call_start_time is not None:
+                        call_duration = current_time - call_start_time
+                        
+                        if call_duration < CALL_DURATION_THRESHOLD:
+                            # Audio was too brief, ignore it
+                            logging.info(f"Brief audio activity ignored ({call_duration:.1f}s < {CALL_DURATION_THRESHOLD}s threshold)")
                         else:
-                            check_result = check_sipgate_mic_wmi()
-                            
-                        if not check_result:
-                            logging.info(f"Call not taken after {i+1} seconds. Ignoring session...")
-                            stable = False
-                            break
-
-                    if stable:
-                        logging.info("Call answered: Starting OBS recording")
-                        call_obs("start")
-                        recording = True
-
-                elif not active and recording:
-                    logging.info("Call ended: Stopping OBS recording")
-                    call_obs("stop")
-                    recording = False
+                            # This was a real call that has now ended
+                            if recording:
+                                logging.info("Call ended: Stopping OBS recording")
+                                call_obs("stop")
+                                recording = False
+                            else:
+                                logging.info(f"Call session ended without recording (duration: {call_duration:.1f}s)")
+                        
+                        # Reset call tracking variables
+                        call_start_time = None
+                        call_detection_logged = False
 
             except Exception as e:
                 logging.exception(f"Error in call state logic: {e}")
 
             # Periodic status logging
-            now = time.time()
-            if now - last_mem_log >= 60:
+            if current_time - last_mem_log >= 60:
                 try:
                     process = psutil.Process(os.getpid())
                     mem_mb = process.memory_info().rss / 1024**2
@@ -306,7 +327,7 @@ def main():
                                f"Recording: {recording}, Method: {method}")
                 except Exception as e:
                     logging.error(f"Could not log stats: {e}")
-                last_mem_log = now
+                last_mem_log = current_time
 
             time.sleep(POLL_INTERVAL)
 
