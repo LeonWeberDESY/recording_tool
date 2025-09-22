@@ -276,7 +276,7 @@ def main():
                         # First detection of audio activity
                         call_start_time = current_time
                         call_detection_logged = False
-                        logging.info("Audio activity detected: Checking duration...")
+                        
                     
                     # Check if audio has been active long enough to be considered a call
                     call_duration = current_time - call_start_time
@@ -284,7 +284,7 @@ def main():
                     if call_duration >= CALL_DURATION_THRESHOLD:
                         # This is now considered a real call
                         if not call_detection_logged:
-                            logging.info(f"Call detected (duration: {call_duration:.1f}s): Waiting for answer...")
+                            logging.info("Audio activity detected: Checking duration...")
                             call_detection_logged = True
                         
                         # Check if we should start recording (after recording delay)
@@ -299,7 +299,8 @@ def main():
                         
                         if call_duration < CALL_DURATION_THRESHOLD:
                             # Audio was too brief, ignore it
-                            logging.info(f"Brief audio activity ignored ({call_duration:.1f}s < {CALL_DURATION_THRESHOLD}s threshold)")
+                            #logging.info(f"Brief audio activity ignored ({call_duration:.1f}s < {CALL_DURATION_THRESHOLD}s threshold)")
+                            pass
                         else:
                             # This was a real call that has now ended
                             if recording:
