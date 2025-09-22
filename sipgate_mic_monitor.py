@@ -1,34 +1,33 @@
-import os
-import sys
 import time
-import json
-import logging
 import subprocess
 import psutil
-import atexit
-import threading
-import queue
+import sys
+import os
+import logging
+import json
+import gc
+import multiprocessing
+from multiprocessing import Queue
+import pythoncom
 from ctypes import POINTER, cast
-from comtypes import CLSCTX_ALL, CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED
-from pycaw.pycaw import AudioUtilities, IAudioSessionManager2, IAudioSessionControl2
+from comtypes import CLSCTX_ALL, CoInitialize, CoUninitialize
 
 # -----------------------------
 # Configuration
 # -----------------------------
-SIPGATE_PROCESS_NAME = "Sipgate.exe"
-ROOT = os.path.dirname(__file__)
-OBS_CONTROL_SCRIPT = os.path.join(ROOT, "obs_control.py")
-PYTHON_EXE = sys.executable
-LOGFILE_PATH = os.path.join(ROOT, "logs_sipgate_mic_monitor.log")
-CONFIG_FILE = os.path.join(ROOT, "config.json")
 
-with open(CONFIG_FILE, 'r') as json_file:
-    cfg = json.load(json_file)
-    POLL_INTERVAL = cfg.get("POLL_INTERVAL", 1)
-    RECORDING_DELAY = cfg.get("RECORDING_DELAY", 3)
+with open('config.json', 'r') as json_file:
+    cfg = json.loads(json_file.read())
+    POLL_INTERVAL = cfg["POLL_INTERVAL"]
+    RECORDING_DELAY = cfg["RECORDING_DELAY"]
+
+SIPGATE_PROCESS_NAME = "Sipgate.exe"
+OBS_CONTROL_SCRIPT = os.path.join(os.path.dirname(__file__), "obs_control.py")
+PYTHON_EXE = sys.executable  # Use the same Python interpreter
+LOGFILE_PATH = os.path.join(os.path.dirname(__file__), "logs_sipgate_mic_monitor.log")
 
 # -----------------------------
-# Configure logging
+# Configure logging with timestamps
 # -----------------------------
 logging.basicConfig(
     filename=LOGFILE_PATH,
@@ -37,12 +36,10 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-def flush_logs():
-    for handler in logging.root.handlers:
-        try:
-            handler.flush()
-        except Exception:
-            pass
+# Also log to console for debugging
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+logging.getLogger('').addHandler(console)
 
 # -----------------------------
 # Global uncaught exception hook
@@ -52,270 +49,312 @@ def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
     logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
-    flush_logs()
 
 sys.excepthook = log_uncaught_exceptions
 
 # -----------------------------
-# STA worker thread
+# Isolated COM worker process
 # -----------------------------
-class STAWorker(threading.Thread):
+def com_worker_process(queue):
     """
-    Thread that initializes COM in STA and services mic-check requests.
-    Communicates via: worker.request_q (put response_queue)
+    Separate process to handle COM operations.
+    This completely isolates COM from the main process.
     """
-
-    def __init__(self, sipgate_name, request_q, stop_event):
-        super().__init__(daemon=True)
-        self.sipgate_name = sipgate_name.lower()
-        self.request_q = request_q
-        self.stop_event = stop_event
-
-    def run(self):
-        logging.info("STAWorker: Starting and initializing COM (STA).")
-        try:
-            CoInitializeEx(COINIT_APARTMENTTHREADED)
-        except Exception:
-            logging.exception("STAWorker: CoInitializeEx failed (continuing to run may fail).")
-
-        try:
-            while not self.stop_event.is_set():
-                try:
-                    # wait for a request, or timeout to re-check stop_event
-                    resp_q = self.request_q.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-
-                # Process request: resp_q is a queue.Queue supplied by caller
-                try:
-                    result = self._check_mic_active()
-                    resp_q.put(("ok", result))
-                except Exception as e:
-                    logging.exception("STAWorker: Error while checking mic")
-                    resp_q.put(("err", str(e)))
-                finally:
-                    # mark task done if using task_done (not strictly necessary)
-                    try:
-                        self.request_q.task_done()
-                    except Exception:
-                        pass
-
-        finally:
-            # cleanup COM
+    # Import pycaw only in the worker process
+    from pycaw.pycaw import AudioUtilities, IAudioSessionManager2, IAudioSessionControl2
+    
+    # Initialize COM for this process
+    pythoncom.CoInitialize()
+    
+    try:
+        while True:
             try:
-                CoUninitialize()
-            except Exception:
-                logging.exception("STAWorker: CoUninitialize failed.")
-            logging.info("STAWorker: Exiting and uninitialized COM.")
-            flush_logs()
-
-
-    def _check_mic_active(self):
-        """
-        All COM calls must happen here (inside STA thread).
-        Returns True if a SIPGATE_PROCESS_NAME session is active (state==1).
-        """
-        # defensive: default False
-        active = False
-
-        # enumerate devices and query sessions
-        # release every COM object explicitly after use
-        enumerator = None
-        mic = None
-        session_manager = None
-        sessions = None
-
-        try:
-            enumerator = AudioUtilities.GetDeviceEnumerator()
-            # role choice: eCommunications = 2 (safer if you want communications device)
-            mic = enumerator.GetDefaultAudioEndpoint(1, 2)  # capture, communications
-            session_manager_ptr = mic.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
-            session_manager = cast(session_manager_ptr, POINTER(IAudioSessionManager2))
-            sessions = session_manager.GetSessionEnumerator()
-
-            count = sessions.GetCount()
-            for i in range(count):
-                session = None
-                session2 = None
-                try:
-                    session = sessions.GetSession(i)
-                    session2 = session.QueryInterface(IAudioSessionControl2)
-                    pid = session2.GetProcessId()
+                # Get command from queue
+                command = queue.get(timeout=1)
+                
+                if command == "CHECK":
+                    result = False
+                    
                     try:
-                        proc = psutil.Process(pid)
-                        if proc.name().lower() == self.sipgate_name:
-                            state = session.GetState()  # 0 inactive, 1 active
-                            if state == 1:
-                                active = True
-                                break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        # ignore processes that disappear or are inaccessible
-                        pass
-                finally:
-                    # release session2 and session
-                    for obj in (session2, session):
-                        if obj is None:
-                            continue
-                        try:
-                            obj.Release()
-                        except Exception:
-                            # ignore release errors; log at debug
-                            logging.debug("STAWorker: Failed to Release session object (ignored).")
-                        try:
-                            del obj
-                        except Exception:
-                            pass
-
-            return active
-
-        finally:
-            # release top-level COM objects in reverse order
-            for obj in (sessions, session_manager, mic, enumerator):
-                if obj is None:
-                    continue
-                try:
-                    obj.Release()
-                except Exception:
-                    logging.debug("STAWorker: Failed to Release top-level COM object (ignored).")
-                try:
-                    del obj
-                except Exception:
-                    pass
+                        # Perform the mic check
+                        enumerator = AudioUtilities.GetDeviceEnumerator()
+                        mic = enumerator.GetDefaultAudioEndpoint(1, 1)  # 1=capture, 1=communications
+                        
+                        session_manager = mic.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
+                        session_manager = cast(session_manager, POINTER(IAudioSessionManager2))
+                        sessions = session_manager.GetSessionEnumerator()
+                        
+                        for i in range(sessions.GetCount()):
+                            try:
+                                session = sessions.GetSession(i)
+                                session2 = session.QueryInterface(IAudioSessionControl2)
+                                pid = session2.GetProcessId()
+                                
+                                proc = psutil.Process(pid)
+                                if proc.name().lower() == SIPGATE_PROCESS_NAME.lower():
+                                    state = session.GetState()  # 0=inactive, 1=active
+                                    if state == 1:
+                                        result = True
+                                        break
+                            except:
+                                continue
+                        
+                        queue.put(result)
+                        
+                    except Exception as e:
+                        queue.put(False)
+                        print(f"COM worker error: {e}")
+                        
+                elif command == "EXIT":
+                    break
+                    
+            except:
+                # Timeout - continue waiting
+                continue
+                
+    finally:
+        pythoncom.CoUninitialize()
 
 # -----------------------------
-# Global STA worker and helpers
+# Process-based mic checker
 # -----------------------------
-_request_q = queue.Queue()
-_stop_event = threading.Event()
-_sta_worker = None
+class ProcessSafeMicChecker:
+    def __init__(self):
+        self.process = None
+        self.queue = None
+        self.response_queue = None
+        self.start_worker()
+    
+    def start_worker(self):
+        """Start the COM worker process."""
+        self.queue = multiprocessing.Queue()
+        self.response_queue = multiprocessing.Queue()
+        
+        # Create wrapper to handle both queues
+        def worker_wrapper():
+            com_worker_process(self.queue)
+        
+        self.process = multiprocessing.Process(target=com_worker_process, args=(self.queue,))
+        self.process.daemon = True
+        self.process.start()
+        logging.info("Started COM worker process")
+    
+    def check_mic(self):
+        """Check if Sipgate mic is active using the worker process."""
+        if not self.process or not self.process.is_alive():
+            logging.warning("Worker process dead, restarting...")
+            self.cleanup()
+            self.start_worker()
+            time.sleep(1)  # Give it time to initialize
+        
+        try:
+            # Clear any old responses
+            while not self.queue.empty():
+                try:
+                    self.queue.get_nowait()
+                except:
+                    break
+            
+            # Send check command
+            self.queue.put("CHECK")
+            
+            # Wait for response (with timeout)
+            result = self.queue.get(timeout=3)
+            return result
+            
+        except Exception as e:
+            logging.error(f"Error checking mic: {e}")
+            # Restart worker on error
+            self.cleanup()
+            self.start_worker()
+            return False
+    
+    def cleanup(self):
+        """Clean up the worker process."""
+        if self.process and self.process.is_alive():
+            try:
+                self.queue.put("EXIT")
+                self.process.join(timeout=2)
+                if self.process.is_alive():
+                    self.process.terminate()
+                    self.process.join(timeout=2)
+                    if self.process.is_alive():
+                        self.process.kill()
+            except:
+                pass
 
-def start_sta_worker():
-    global _sta_worker
-    if _sta_worker and _sta_worker.is_alive():
-        return
-    _sta_worker = STAWorker(SIPGATE_PROCESS_NAME, _request_q, _stop_event)
-    _sta_worker.start()
-    logging.info("Started STAWorker thread.")
-
-def stop_sta_worker():
-    _stop_event.set()
-    if _sta_worker:
-        _sta_worker.join(timeout=5)
-    logging.info("Stopped STAWorker thread.")
-
-atexit.register(stop_sta_worker)
-
-def is_sipgate_mic_active_via_sta(timeout=5.0):
+# -----------------------------
+# Alternative: WMI-based checker (fallback)
+# -----------------------------
+def check_sipgate_mic_wmi():
     """
-    Request the STA worker to check mic state and wait up to `timeout` seconds for a reply.
-    Returns True/False or raises RuntimeError on failure/timeout.
+    Alternative method using WMI to check audio sessions.
+    This is a fallback if COM continues to fail.
     """
-    if _sta_worker is None or not _sta_worker.is_alive():
-        # ensure worker running
-        start_sta_worker()
-        # small delay to let it initialize COM
-        time.sleep(0.05)
-
-    resp_q = queue.Queue(maxsize=1)
     try:
-        _request_q.put(resp_q, block=True, timeout=1)
-    except queue.Full:
-        raise RuntimeError("STA request queue is full")
-
-    try:
-        status, payload = resp_q.get(timeout=timeout)
-    except queue.Empty:
-        raise RuntimeError("Timeout waiting for STA worker response")
-
-    if status == "ok":
-        return bool(payload)
-    else:
-        # payload contains error string
-        raise RuntimeError(f"STA worker error: {payload}")
+        import wmi
+        c = wmi.WMI()
+        
+        # Check if Sipgate process exists and has audio
+        for process in c.Win32_Process(Name=SIPGATE_PROCESS_NAME):
+            # If process exists, we assume it might be in a call
+            # This is less accurate but more stable
+            return True
+        return False
+    except:
+        return False
 
 # -----------------------------
 # Helper: call OBS control script
 # -----------------------------
 def call_obs(action):
     if action.lower() not in ("start", "stop"):
-        logging.warning(f"Invalid OBS action requested: {action}")
         return
     try:
         subprocess.Popen([PYTHON_EXE, OBS_CONTROL_SCRIPT, action])
-    except Exception:
-        logging.exception(f"Failed to call OBS action: {action}")
+        logging.info(f"Called OBS control with action: {action}")
+    except Exception as e:
+        logging.error(f"Failed to call OBS control: {e}")
 
 # -----------------------------
-# Main loop
+# Main loop with process isolation
 # -----------------------------
 def main():
-    logging.info("Start: Monitoring Sipgate mic and controlling OBS...")
-    start_sta_worker()
+    logging.info("="*50)
+    logging.info("Starting Sipgate mic monitor (Process-Isolated Version)")
+    logging.info(f"Python version: {sys.version}")
+    logging.info(f"Poll interval: {POLL_INTERVAL}s, Recording delay: {RECORDING_DELAY}s")
+    logging.info("="*50)
+    
     recording = False
     last_mem_log = 0
-
+    error_count = 0
+    max_consecutive_errors = 10
+    use_fallback = False
+    
+    # Create the process-safe mic checker
+    mic_checker = ProcessSafeMicChecker()
+    
     try:
         while True:
-            # ask STA thread whether sipgate mic is active
             try:
-                active = is_sipgate_mic_active_via_sta(timeout=3.0)
-            except Exception:
-                logging.exception("Error while checking Sipgate mic session")
+                # Check mic status
+                if not use_fallback:
+                    try:
+                        active = mic_checker.check_mic()
+                        error_count = 0  # Reset on success
+                    except Exception as e:
+                        error_count += 1
+                        logging.error(f"Mic check failed ({error_count}/{max_consecutive_errors}): {e}")
+                        
+                        if error_count >= max_consecutive_errors:
+                            logging.warning("Too many COM errors, switching to fallback method")
+                            use_fallback = True
+                            active = check_sipgate_mic_wmi()
+                        else:
+                            active = False
+                else:
+                    # Use fallback WMI method
+                    active = check_sipgate_mic_wmi()
+                
+            except Exception as e:
+                logging.exception(f"Critical error in mic check: {e}")
                 active = False
 
             try:
                 if active and not recording:
                     logging.info("Call detected: Waiting for answer...")
+
+                    # Wait for confirmation delay
                     stable = True
-                    for _ in range(RECORDING_DELAY):
+                    for i in range(RECORDING_DELAY):
                         time.sleep(1)
-                        try:
-                            if not is_sipgate_mic_active_via_sta(timeout=3.0):
-                                logging.info("Call not taken. Ignoring session...")
-                                stable = False
-                                break
-                        except Exception:
-                            logging.exception("Error during confirmation delay mic check")
+                        
+                        # Check if still active
+                        if not use_fallback:
+                            check_result = mic_checker.check_mic()
+                        else:
+                            check_result = check_sipgate_mic_wmi()
+                            
+                        if not check_result:
+                            logging.info(f"Call not taken after {i+1} seconds. Ignoring session...")
                             stable = False
                             break
 
                     if stable:
-                        logging.info("Call answered: Forwarding OBS to RECORD")
+                        logging.info("Call answered: Starting OBS recording")
                         call_obs("start")
                         recording = True
 
                 elif not active and recording:
-                    logging.info("Call ended: Forwarding OBS to STOP")
+                    logging.info("Call ended: Stopping OBS recording")
                     call_obs("stop")
                     recording = False
 
-            except Exception:
-                logging.exception("Error while handling call state logic")
+            except Exception as e:
+                logging.exception(f"Error in call state logic: {e}")
 
-            # Periodic memory usage logging (every 1 minute)
+            # Periodic status logging
             now = time.time()
             if now - last_mem_log >= 60:
                 try:
-                    mem = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-                    logging.info("Memory usage: %.2f MB", mem)
-                except Exception:
-                    logging.exception("Failed to get memory usage")
+                    process = psutil.Process(os.getpid())
+                    mem_mb = process.memory_info().rss / 1024**2
+                    cpu_percent = process.cpu_percent(interval=0.1)
+                    method = "Fallback/WMI" if use_fallback else "COM/Process"
+                    logging.info(f"Status - Memory: {mem_mb:.2f} MB, CPU: {cpu_percent:.1f}%, "
+                               f"Recording: {recording}, Method: {method}")
+                except Exception as e:
+                    logging.error(f"Could not log stats: {e}")
                 last_mem_log = now
-                
-            flush_logs()
+
             time.sleep(POLL_INTERVAL)
 
     except KeyboardInterrupt:
-        logging.error("Stopping monitoring (KeyboardInterrupt).")
-    except BaseException as e:
-        logging.critical(f"Fatal error in main loop: {e}", exc_info=True)
-        raise
+        logging.info("Stopping monitoring (KeyboardInterrupt)")
+
     finally:
-        stop_sta_worker()
-        flush_logs()
+        logging.info("Performing cleanup...")
+        mic_checker.cleanup()
+        logging.info("Sipgate mic monitor stopped")
 
 # -----------------------------
-# Entry point
+# Robust entry point
 # -----------------------------
 if __name__ == "__main__":
-    main()   
+    # Set multiprocessing start method for Windows
+    if sys.platform == "win32":
+        multiprocessing.set_start_method('spawn', force=True)
+    
+    max_restarts = 5
+    restart_count = 0
+    
+    while restart_count < max_restarts:
+        try:
+            main()
+            break
+            
+        except SystemExit:
+            logging.info("Normal exit")
+            break
+            
+        except Exception as e:
+            restart_count += 1
+            logging.critical(f"Fatal error (restart {restart_count}/{max_restarts}): {e}", exc_info=True)
+            
+            if restart_count < max_restarts:
+                wait_time = min(30 * restart_count, 300)
+                logging.info(f"Restarting in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logging.critical("Maximum restarts reached. Exiting.")
+                
+                # Create a marker file to indicate repeated crashes
+                try:
+                    with open("CRASH_MARKER.txt", "w") as f:
+                        f.write(f"Crashed {max_restarts} times. Last error: {str(e)}\n")
+                        f.write(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                except:
+                    pass
+                    
+                sys.exit(1)

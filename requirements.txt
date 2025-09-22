@@ -2,3 +2,5 @@ simpleobsws
 pycaw
 comtypes
 psutil
+pywin32
+wmi
