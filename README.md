@@ -86,7 +86,8 @@ bash install.sh
 2. Adjust the **OBS** recording settings (`scene_name`, `input_name`,  and `device_id`)
 3. Adjust the directory and file pathes to **OBS** and the Virtual Environment **Python** executable (`pythonw.exe`)
 4. Adjust the path to the **recording_tool** project folder
-5. Adjust the poll interval (how often is the script checking the mic session status) and the recording delay.
+
+The path format is important, keep the double `//` for `.json` syntax.!
 
 ### 4. At this point, you can test if the setup was successfull by executing `start_obs_sipgate_controller.bat`
 - Double-click the `start_obs_sipgate_controller.bat` or open a terminal in the folder and run:
@@ -95,7 +96,7 @@ bash install.sh
 ```
 - After a few seconds OBS Studio should open (you can minimize that).
 - To check if the scripts are running: Open Task Manager → Details → Search for `pythonw.exe`. If there are tasks running, then the scripts are working.
-- Go into Sipgate and answer a call (or go into Settings → Audio), this will trigger the scripts and the icon of OBS Studio in the task bar should have a red dot (recording). End the call (or leave the settings) and it should dissapear.
+- Go into Sipgate and answer a call (or go into Settings → Audio), after the recording delay this will trigger the scripts and the icon of OBS Studio in the task bar should have a red dot (recording). End the call (or leave the settings) and it should dissapear.
 - Now a video file should be available at the directory you choose in OBS Studio.
 - If one of these steps didn't work, check Chapter "Troubleshooting" below.
 
@@ -106,18 +107,23 @@ bash install.sh
     - Right-click Task Scheduler Library → Create Task… (not “Create Basic Task”).
 3. **General tab**
     - Name: "Start OBS + Sipgate Controller" (or however you want to name it)
-    - Optionally check **Run with highest privileges** if needed.
-    - Optionally select **Run whether user is logged on or not** (this will run even if you don’t log in interactively).
+    - Check **Run with highest privileges** if needed.
 4. **Triggers tab**
     - Click **New…** → **Begin the task: At log on** → **OK**.
+    - Click **Any user**
+    - Click **Delay task for 2 minutes**
+    - Click **Enabled** 
 5. **Actions tab**
     - Click **New…** → **Action: Start a program**
-    - Program/script: Browse for the `start_obs_sipgate_controller.bat` file or copy the whole file path directly
+    - Program/script: `C:\Windows\System32\cmd.exe`
+    - Add arguments: `/c "C:\Users\LeonWeber\Leon\recording_tool\start_obs_sipgate_controller.bat"` (change to your project folderpath)
+    - Start in: `C:\Users\LeonWeber\Leon\recording_tool` (change to your project folderpath)
 6. Conditions/Settings tabs
     - Uncheck everything in the **Conditions** tab
     - Check **Allow task to be run on demand**  
     - Check **Run task as soon as possible after a scheduled start is missed** 
-    - Check **If the running task does not end when requested, force it to stop**    
+    - Check **If the task fails, restart every: 1 minute, Attempt o restart up to 3 times**
+    - Check **Stop the task if it runs longer than 10 minutes**
     - Uncheck everything else
     - Lastly, select **Do not start a new isntance**
 
