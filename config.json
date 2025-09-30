@@ -7,9 +7,10 @@
     "device_id": "default",
     "obs_path": "C:\\Users\\LeonWeber\\Leon\\OBS\\obs-studio\\bin\\64bit\\obs64.exe",
     "obs_folder_path": "C:\\Users\\LeonWeber\\Leon\\OBS\\obs-studio\\bin\\64bit",
+    "obs_recording_path": "C:\\Users\\LeonWeber\\Leon\\OBS\\Videos",
     "python_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool\\venv\\Scripts\\pythonw.exe",
     "project_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool",
-    "POLL_INTERVAL": 1.0,
-    "RECORDING_DELAY": 20,
-    "CALL_DURATION_THRESHOLD": 5
+    "poll_interval": 1.0,
+    "recording_delay": 20,
+    "call_duration_threshold": 5
 }

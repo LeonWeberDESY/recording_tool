@@ -9,8 +9,12 @@ import gc
 import multiprocessing
 from multiprocessing import Queue
 import pythoncom
+from pathlib import Path
 from ctypes import POINTER, cast
 from comtypes import CLSCTX_ALL, CoInitialize, CoUninitialize
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+import threading
 
 # -----------------------------
 # Configuration
@@ -18,9 +22,10 @@ from comtypes import CLSCTX_ALL, CoInitialize, CoUninitialize
 
 with open('config.json', 'r') as json_file:
     cfg = json.loads(json_file.read())
-    POLL_INTERVAL = cfg["POLL_INTERVAL"]
-    RECORDING_DELAY = cfg["RECORDING_DELAY"]
-    CALL_DURATION_THRESHOLD = cfg["CALL_DURATION_THRESHOLD"] 
+    POLL_INTERVAL = cfg["poll_interval"]
+    RECORDING_DELAY = cfg["recording_delay"]
+    CALL_DURATION_THRESHOLD = cfg["call_duration_threshold"] 
+    RECORDING_DIR = cfg["obs_recording_path"]
 
 SIPGATE_PROCESS_NAME = "Sipgate.exe"
 OBS_CONTROL_SCRIPT = os.path.join(os.path.dirname(__file__), "obs_control.py")
@@ -52,6 +57,184 @@ def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
     logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
 sys.excepthook = log_uncaught_exceptions
+
+# -----------------------------
+# Recording Rename Handler with Folder Organization
+# -----------------------------
+class RecordingRenamer:
+    def __init__(self, recording_dir):
+        self.recording_dir = Path(recording_dir)
+        self.recording_start_time = None
+        
+    def mark_recording_start(self):
+        """Mark the time when recording started"""
+        self.recording_start_time = time.time()
+        logging.info("Recording start time marked for file tracking")
+    
+    def get_latest_recording(self):
+        """Find the most recently created recording file"""
+        if not self.recording_start_time:
+            logging.warning("No recording start time marked")
+            return None
+            
+        time.sleep(2)  # Give OBS time to finalize the file
+        
+        # Check for common video formats
+        video_extensions = ['*.mkv', '*.mp4', '*.flv', '*.mov']
+        all_files = []
+        
+        try:
+            for ext in video_extensions:
+                all_files.extend(self.recording_dir.glob(ext))
+            
+            # Filter files created after recording started
+            recent_files = [f for f in all_files if f.stat().st_mtime > self.recording_start_time]
+            
+            if not recent_files:
+                logging.warning("No recording files found after recording start time")
+                return None
+            
+            # Return the most recent file
+            latest = max(recent_files, key=lambda x: x.stat().st_mtime)
+            logging.info(f"Found latest recording: {latest.name}")
+            return latest
+            
+        except Exception as e:
+            logging.error(f"Error finding latest recording: {e}")
+            return None
+    
+    def prompt_for_name(self, default_name=""):
+        """Show a dialog to get the ticket number"""
+        try:
+            root = tk.Tk()
+            root.withdraw()  # Hide the main window
+            root.attributes('-topmost', True)  # Bring dialog to front
+            
+            ticket_number = simpledialog.askstring(
+                "Rename Recording",
+                "Enter ticket number (digits only):",
+                initialvalue=default_name,
+                parent=root
+            )
+            
+            root.destroy()
+            return ticket_number
+        except Exception as e:
+            logging.error(f"Error showing rename dialog: {e}")
+            return None
+    
+    def get_next_recording_number(self, ticket_folder):
+        """Get the next available recording number for this ticket"""
+        try:
+            # Find all video files in the ticket folder
+            video_extensions = ['*.mkv', '*.mp4', '*.flv', '*.mov']
+            existing_files = []
+            
+            for ext in video_extensions:
+                existing_files.extend(ticket_folder.glob(ext))
+            
+            if not existing_files:
+                return 1
+            
+            # Extract numbers from filenames (format: ticketnumber_XXX.ext)
+            max_number = 0
+            for file in existing_files:
+                stem = file.stem
+                # Try to extract the last part after underscore
+                if '_' in stem:
+                    try:
+                        number_part = stem.split('_')[-1]
+                        number = int(number_part)
+                        max_number = max(max_number, number)
+                    except ValueError:
+                        continue
+            
+            return max_number + 1
+            
+        except Exception as e:
+            logging.error(f"Error getting next recording number: {e}")
+            return 1
+    
+    def organize_recording(self, old_path, ticket_number):
+        """Organize recording into ticket folder with sequential numbering"""
+        if not ticket_number:
+            logging.info("No ticket number provided, keeping original filename")
+            return old_path
+        
+        # Validate that ticket_number contains only digits
+        if not ticket_number.isdigit():
+            logging.warning(f"Ticket number '{ticket_number}' contains non-digit characters")
+            try:
+                messagebox.showwarning(
+                    "Invalid Ticket Number",
+                    "Ticket number should contain only digits.\nKeeping original filename."
+                )
+            except:
+                pass
+            return old_path
+        
+        try:
+            # Create ticket folder if it doesn't exist
+            ticket_folder = self.recording_dir / ticket_number
+            ticket_folder.mkdir(exist_ok=True)
+            logging.info(f"Ticket folder ready: {ticket_folder}")
+            
+            # Get the next recording number
+            recording_number = self.get_next_recording_number(ticket_folder)
+            
+            # Create new filename: ticketnumber_XXX.ext
+            old_extension = old_path.suffix
+            new_filename = f"{ticket_number}_{recording_number:03d}{old_extension}"
+            new_path = ticket_folder / new_filename
+            
+            # Move the file
+            old_path.rename(new_path)
+            logging.info(f"Recording organized: '{old_path.name}' -> '{ticket_number}/{new_filename}'")
+            
+            # Show success message
+            try:
+                messagebox.showinfo(
+                    "Recording Saved",
+                    f"Recording saved as:\n{ticket_number}/{new_filename}"
+                )
+            except:
+                pass
+            
+            return new_path
+            
+        except Exception as e:
+            logging.error(f"Error organizing recording: {e}")
+            try:
+                messagebox.showerror("Organization Error", f"Could not organize file: {e}")
+            except:
+                pass
+            return old_path
+    
+    def handle_recording_rename(self):
+        """Main function to handle the rename after recording stops"""
+        try:
+            # Find the latest recording
+            latest_file = self.get_latest_recording()
+            
+            if not latest_file:
+                logging.error("Could not find recording file to rename")
+                try:
+                    messagebox.showerror("Error", "Could not find the recording file")
+                except:
+                    pass
+                return
+            
+            # Prompt for ticket number
+            ticket_number = self.prompt_for_name()
+            
+            # Organize the file into ticket folder
+            if ticket_number:
+                self.organize_recording(latest_file, ticket_number)
+            else:
+                logging.info("User cancelled rename operation")
+                
+        except Exception as e:
+            logging.error(f"Error in handle_recording_rename: {e}", exc_info=True)
 
 # -----------------------------
 # Isolated COM worker process
@@ -328,12 +511,17 @@ def check_sipgate_mic_wmi():
 # -----------------------------
 # Helper: call OBS control script
 # -----------------------------
-def call_obs(action):
+def call_obs(action, renamer=None):
     if action.lower() not in ("start", "stop"):
         return
     try:
         subprocess.Popen([PYTHON_EXE, OBS_CONTROL_SCRIPT, action])
         logging.info(f"Called OBS control with action: {action}")
+        
+        # Mark recording start time for file tracking
+        if action.lower() == "start" and renamer:
+            renamer.mark_recording_start()
+            
     except Exception as e:
         logging.error(f"Failed to call OBS control: {e}")
 
@@ -360,6 +548,9 @@ def main():
     
     # Create the process-safe mic checker
     mic_checker = ProcessSafeMicChecker()
+    
+    # Create the recording renamer
+    renamer = RecordingRenamer(RECORDING_DIR)
     
     try:
         while True:
@@ -410,7 +601,7 @@ def main():
                         # Check if we should start recording (after recording delay)
                         if not recording and call_duration >= RECORDING_DELAY:
                             logging.info("Call answered: Starting OBS recording")
-                            call_obs("start")
+                            call_obs("start", renamer)
                             recording = True
                 
                 else:  # No microphone activity
@@ -419,7 +610,6 @@ def main():
                         
                         if call_duration < CALL_DURATION_THRESHOLD:
                             # Audio was too brief, ignore it
-                            #logging.info(f"Brief audio activity ignored ({call_duration:.1f}s < {CALL_DURATION_THRESHOLD}s threshold)")
                             pass
                         else:
                             # This was a real call that has now ended
@@ -427,6 +617,13 @@ def main():
                                 logging.info("Call ended: Stopping OBS recording")
                                 call_obs("stop")
                                 recording = False
+                                
+                                # Launch rename dialog in a separate thread to avoid blocking
+                                time.sleep(2)  # Give OBS time to finalize the file
+                                logging.info("Launching rename dialog...")
+                                rename_thread = threading.Thread(target=renamer.handle_recording_rename)
+                                rename_thread.daemon = True
+                                rename_thread.start()
                             else:
                                 logging.info(f"Call session ended without recording (duration: {call_duration:.1f}s)")
                         
