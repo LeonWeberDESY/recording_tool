@@ -8,7 +8,7 @@ This project provides a fully automated workflow to record Desktop Screens durin
 - Dynamically creates/disables OBS mic input for recording.
 - Uses OBS WebSocket (v5) to control recording.
 - No manual hotkeys required.
-- Fully compatible with multiple user setups.
+- Video file gets safed in folder and renamed to Ticket ID (manual input after recording stopped)
 
 ## Requirements
 
@@ -23,8 +23,6 @@ Optional for testing or development:
 - VSCode or any Python IDE.
 
 ### Python Packages
-Install all required packages via executing `install.bat`:
-
 | **Package**	| **Purpose** |
 | ----- | ----- |
 | **simpleobsws** |	OBS WebSocket client (v5 compatible) |
@@ -36,6 +34,7 @@ Install all required packages via executing `install.bat`:
 ### Project files
 | **File**	| **Purpose** |
 | ----- | ----- |
+| `.gitattributes` | Contains the file formatting regarding line endings (CLRF or LF). |
 | `.gitignore` | Contains the files or folders that will ignored by Git when pushing or pulling. |
 | `config.json` | Contains all configuration settings. |
 | `install.sh` | Bash script to create virtual environment and install required packages. |
@@ -52,18 +51,18 @@ Install all required packages via executing `install.bat`:
 - Download and install **OBS Studio** (≥ 31.1.2) and ensure WebSocket ≥ 5.x is included.
     1. Open OBS Studio and decline the "auto-configuration wizard".
     2. Open OBS Studio → Tools (top bar) → WebSocket Server Settings.
-    3. Enable the server, set port (default 4455), and optionally a password.
+    3. Check "Eanble WebSocket server", set port (default 4455), and optionally a password.
     4. This will open Windows Firewall Settings → Accept it.
     5. Create a new scene and name it i.e. `sipgate_scene`
     6. Go to Settings (bottom right) → Video
     7. Set Base (Canvas) Resolution and Output (Scaled) resolution each to `5360x1440`. Set FPS to 30.
     8. Go to Settings → Audio → Global Audio Devices
     9. Select Desktop Audio `Default`, all others `Disabled` 
-    10. Select the scene and add a new source (Display Capture) for each monitor connected. Drag and drop the sources on the canvas so they don't overlap.
+    10. Add a new source (Display Capture) for each monitor connected. Drag and drop the sources on the canvas so they don't overlap.
     11. Go to Settings → Output and select Output Mode `Advanced`.
-    12. Go to Recording and set the Recording Path to as you like. Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`.
+    12. Go to Recording and set the Recording Path to as you like (no spacings or Umlaute). Click "Generate File Name without Space" and set Recording Format to `MPEG-4 (.mp4)`.
 - Download and install **Python** 3.13+:
-    1. Open the installer and select "use admin privileges when installing py.exe" and "ADd python.exe to PATH"
+    1. Open the installer and select "use admin privileges when installing py.exe" and "Add python.exe to PATH"
     2. Select Customize installation.
     3. Check all boxes on the next page.
     4. In "Advanced Options" check the first 5 boxes up to "precompile standard library" and then select a install location.
@@ -75,9 +74,13 @@ Install all required packages via executing `install.bat`:
 3. There run:
 ```bash
 git clone https://github.com/LeonWeberDESY/recording_tool
-
+```
+Then go into the directory with
+```bash
 cd recording_tool/
-
+```
+and then execute this command:
+```bash
 bash install.sh
 ```
 
@@ -116,7 +119,7 @@ The path format is important, keep the double `//` for `.json` syntax.!
 5. **Actions tab**
     - Click **New…** → **Action: Start a program**
     - Program/script: `C:\Windows\System32\cmd.exe`
-    - Add arguments: `/c "C:\Users\LeonWeber\Leon\recording_tool\start_obs_sipgate_controller.bat"` (change to your project folderpath)
+    - Add arguments: `/c "C:\Users\LeonWeber\Leon\recording_tool\start_obs_sipgate_controller.bat"` (change to the path of the `.bat` file in the project folder).
     - Start in: `C:\Users\LeonWeber\Leon\recording_tool` (change to your project folderpath)
 6. Conditions/Settings tabs
     - Uncheck everything in the **Conditions** tab

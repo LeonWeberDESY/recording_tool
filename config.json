@@ -11,6 +11,6 @@
     "python_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool\\venv\\Scripts\\pythonw.exe",
     "project_path": "C:\\Users\\LeonWeber\\Leon\\recording_tool",
     "poll_interval": 1.0,
-    "recording_delay": 20,
+    "recording_delay": 12,
     "call_duration_threshold": 5
 }
